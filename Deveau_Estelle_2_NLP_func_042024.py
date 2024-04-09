@@ -11,9 +11,11 @@ nltk.download('stopwords')
 nltk.download('wordnet')
 
 
-def process_text(text, clean=True, tokenize_method=None, remove_stopwords=False, stemming=False, lemmatization=False):
+def process_text(text, clean=True, tokenize_method=None, remove_stopwords=False, stemming=False, lemmatization=False,
+                 words_to_remove=None):
     """
-    Fonction pour prétraiter un texte en appliquant une série d'opérations optionnelles.
+    Fonction pour prétraiter un texte en appliquant une série d'opérations optionnelles,
+    y compris la suppression de mots spécifiques et de mots ne respectant pas une longueur minimale.
 
     Paramètres :
     - text (str) : Le texte à traiter.
@@ -22,6 +24,7 @@ def process_text(text, clean=True, tokenize_method=None, remove_stopwords=False,
     - remove_stopwords (bool) : Si True, supprime les stop words du texte tokenisé.
     - stemming (bool) : Si True, applique le stemming aux tokens.
     - lemmatization (bool) : Si True, applique la lemmatisation aux tokens.
+    - words_to_remove (list) : Liste optionnelle de mots à supprimer du texte tokenisé.
 
     Retourne :
     - list : Une liste de tokens après traitement.
@@ -57,6 +60,10 @@ def process_text(text, clean=True, tokenize_method=None, remove_stopwords=False,
             # Application de la lemmatisation
             lemmatizer = WordNetLemmatizer()
             tokens = [lemmatizer.lemmatize(token) for token in tokens]
+
+        if words_to_remove:
+            # Suppression des mots spécifiés
+            tokens = [token for token in tokens if token not in words_to_remove]
 
         return tokens
 
