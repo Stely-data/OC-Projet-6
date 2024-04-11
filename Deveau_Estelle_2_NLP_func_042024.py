@@ -6,6 +6,16 @@ from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 from nltk.stem.wordnet import WordNetLemmatizer
 
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score, adjusted_rand_score
+
+from sklearn.model_selection import cross_validate
+from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_score, \
+    confusion_matrix, make_scorer
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
+
 nltk.download('punkt')
 nltk.download('stopwords')
 nltk.download('wordnet')
@@ -37,6 +47,7 @@ def process_text(text, clean=True, tokenize_method=None, remove_stopwords=False,
 
     if tokenize_method:
         # Tokenisation
+        tokens = []
         if tokenize_method == 'word_tokenize':
             tokens = word_tokenize(text)
         elif tokenize_method == 'wordpunct':
@@ -68,3 +79,115 @@ def process_text(text, clean=True, tokenize_method=None, remove_stopwords=False,
         return tokens
 
     return text
+
+
+def perform_kmeans(X_data, true_labels, n_clusters=7, random_state=42):
+    """
+    Effectue le clustering K-Means sur des données réduites et évalue les résultats avec le score de silhouette
+    et l'ARI.
+
+    Parameters:
+    - X_data : les données sur lesquelles appliquer le K-Means.
+    - true_labels : les vraies étiquettes de catégories pour le calcul de l'ARI.
+    - n_clusters : le nombre de clusters à former.
+    - random_state : la graine aléatoire pour la reproductibilité des résultats.
+
+    Returns:
+    - silhouette_avg : le score de silhouette moyen pour l'évaluation des clusters.
+    - ari_score : l'Adjusted Rand Index score pour l'évaluation des clusters.
+    - clusters : les étiquettes de clusters prédites par K-Means.
+    """
+    # Initialisation de K-Means
+    kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
+
+    # Application de K-Means sur les données réduites
+    kmeans.fit(X_data)
+
+    # Prédiction des clusters
+    clusters = kmeans.predict(X_data)
+
+    # Évaluation avec la mesure Silhouette
+    silhouette_avg = silhouette_score(X_data, clusters)
+    print(f'Silhouette Score: {silhouette_avg:.4f}')
+
+    # Comparaison avec les vraies catégories si disponibles
+    ari_score = adjusted_rand_score(true_labels, clusters)
+    print(f'Adjusted Rand Score: {ari_score:.4f}')
+
+    return silhouette_avg, ari_score, clusters
+
+
+def perform_model_with_cross_validation(model, X_train, y_train, X_test, y_test, scoring=None, cv=5):
+    """
+    Entraîne un modèle sur des données d'entraînement en utilisant la validation croisée et évalue les résultats
+    sur un ensemble de test avec plusieurs métriques.
+
+    Parameters:
+    - model : le modèle à entraîner.
+    - X_train : les features d'entraînement (matrice BoW ou TF-IDF).
+    - y_train : les étiquettes d'entraînement.
+    - X_test : les features de test.
+    - y_test : les étiquettes de test.
+    - scoring : Liste de métriques à utiliser pour l'évaluation (par défaut, utilise Accuracy, Adjusted Rand Score,
+                Recall, Precision, et F1 Score).
+    - cv : Nombre de folds pour la validation croisée (par défaut, 5).
+
+    Returns:
+    - metrics : Dictionnaire contenant les métriques calculées.
+    """
+    if scoring is None:
+        # Définition des métriques par défaut
+        scoring = {
+            'Accuracy': make_scorer(accuracy_score),
+            'Adjusted Rand Score': make_scorer(adjusted_rand_score),
+            'Recall': make_scorer(recall_score, average='weighted'),
+            'Precision': make_scorer(precision_score, average='weighted'),
+            'F1 Score': make_scorer(f1_score, average='weighted')
+        }
+
+    # Entraînement du modèle avec validation croisée
+    cv_results = cross_validate(model, X_train, y_train, scoring=scoring, cv=cv, return_train_score=False)
+
+    # Prédictions sur l'ensemble de test
+    model.fit(X_train, y_train)
+    predictions = model.predict(X_test)
+
+    # Calcul des métriques sur l'ensemble de test
+    accuracy = accuracy_score(y_test, predictions)
+    ari_score = adjusted_rand_score(y_test, predictions)
+    recall = recall_score(y_test, predictions, average='weighted')
+    precision = precision_score(y_test, predictions, average='weighted')
+    f1 = f1_score(y_test, predictions, average='weighted')
+
+    # Affichage des métriques
+    print("Cross-Validation Scores:")
+    for metric, values in cv_results.items():
+        print(f"{metric}: {np.mean(values):.4f} (± {np.std(values):.4f})")
+
+    print("\nTest Set Metrics:")
+    metrics = {
+        'Accuracy': accuracy,
+        'Adjusted Rand Score': ari_score,
+        'Recall': recall,
+        'Precision': precision,
+        'F1 Score': f1
+    }
+    for metric, value in metrics.items():
+        print(f'{metric}: {value:.4f}')
+
+    # Extraction des noms uniques des catégories
+    category_names = np.unique(np.concatenate((y_test, y_train)))
+
+    # Création de la matrice de confusion
+    conf_matrix = confusion_matrix(y_test, predictions, labels=category_names)
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(conf_matrix, annot=True, fmt="d", cmap='Blues', xticklabels=category_names,
+                yticklabels=category_names)
+    plt.title('Matrice de confusion')
+    plt.xlabel('Prédit')
+    plt.ylabel('Vrai')
+    plt.xticks(rotation=90)
+    plt.yticks(rotation=0)
+    plt.show()
+
+    return metrics
