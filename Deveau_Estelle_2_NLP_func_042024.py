@@ -7,6 +7,8 @@ from nltk.stem import PorterStemmer
 from nltk.stem.wordnet import WordNetLemmatizer
 
 from sklearn.cluster import KMeans
+import pandas as pd
+from sklearn import metrics
 from sklearn.metrics import silhouette_score, adjusted_rand_score
 
 from sklearn.model_selection import cross_validate
@@ -81,7 +83,7 @@ def process_text(text, clean=True, tokenize_method=None, remove_stopwords=False,
     return text
 
 
-def perform_kmeans(X_data, true_labels, n_clusters=7, random_state=42):
+def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=42):
     """
     Effectue le clustering K-Means sur des données réduites et évalue les résultats avec le score de silhouette
     et l'ARI.
@@ -89,16 +91,20 @@ def perform_kmeans(X_data, true_labels, n_clusters=7, random_state=42):
     Parameters:
     - X_data : les données sur lesquelles appliquer le K-Means.
     - true_labels : les vraies étiquettes de catégories pour le calcul de l'ARI.
+    - label_names : les noms réels des catégories pour l'affichage.
     - n_clusters : le nombre de clusters à former.
     - random_state : la graine aléatoire pour la reproductibilité des résultats.
 
     Returns:
     - silhouette_avg : le score de silhouette moyen pour l'évaluation des clusters.
     - ari_score : l'Adjusted Rand Index score pour l'évaluation des clusters.
+    - accuracy : l'accuracy score pour évaluer la précision des clusters alignés avec les vraies catégories.
     - clusters : les étiquettes de clusters prédites par K-Means.
     """
     # Initialisation de K-Means
-    kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
+    # kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
+    kmeans = KMeans(n_clusters=7, n_init=50, max_iter=400, tol=1e-5, algorithm='elkan', init='k-means++',
+                    random_state=42)
 
     # Application de K-Means sur les données réduites
     kmeans.fit(X_data)
@@ -106,15 +112,40 @@ def perform_kmeans(X_data, true_labels, n_clusters=7, random_state=42):
     # Prédiction des clusters
     clusters = kmeans.predict(X_data)
 
+    def conf_mat_transform(y_true, y_pred):
+        conf_mat = metrics.confusion_matrix(y_true, y_pred)
+        corresp = np.argmax(conf_mat, axis=0)
+
+        return pd.Series(y_pred).apply(lambda x: corresp[x])
+
+    # Réaligner les étiquettes de clusters prédites avec les vraies étiquettes
+    clusters_aligned = conf_mat_transform(true_labels, clusters)
+
     # Évaluation avec la mesure Silhouette
-    silhouette_avg = silhouette_score(X_data, clusters)
+    silhouette_avg = silhouette_score(X_data, clusters_aligned)
     print(f'Silhouette Score: {silhouette_avg:.4f}')
 
     # Comparaison avec les vraies catégories si disponibles
-    ari_score = adjusted_rand_score(true_labels, clusters)
+    ari_score = adjusted_rand_score(true_labels, clusters_aligned)
     print(f'Adjusted Rand Score: {ari_score:.4f}')
 
-    return silhouette_avg, ari_score, clusters
+    # Calcul de l'accuracy
+    accuracy = accuracy_score(true_labels, clusters_aligned)
+    print(f'Accuracy: {accuracy:.4f}')
+
+    # Création de la matrice de confusion
+    conf_matrix = confusion_matrix(true_labels, clusters_aligned)
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(conf_matrix, annot=True, fmt="d", cmap='Blues', xticklabels=label_names,
+                yticklabels=label_names)
+    plt.title('Matrice de confusion')
+    plt.xlabel('Prédit')
+    plt.ylabel('Vrai')
+    plt.xticks(rotation=90)
+    plt.yticks(rotation=0)
+    plt.show()
+
+    return silhouette_avg, ari_score, accuracy, clusters
 
 
 def perform_model_with_cross_validation(model, X_train, y_train, X_test, y_test, scoring=None, cv=5):
