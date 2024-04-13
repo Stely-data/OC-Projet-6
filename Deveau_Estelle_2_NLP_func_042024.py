@@ -149,25 +149,7 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
 
 
 def perform_model_with_cross_validation(model, X_train, y_train, X_test, y_test, scoring=None, cv=5):
-    """
-    Entraîne un modèle sur des données d'entraînement en utilisant la validation croisée et évalue les résultats
-    sur un ensemble de test avec plusieurs métriques.
-
-    Parameters:
-    - model : le modèle à entraîner.
-    - X_train : les features d'entraînement (matrice BoW ou TF-IDF).
-    - y_train : les étiquettes d'entraînement.
-    - X_test : les features de test.
-    - y_test : les étiquettes de test.
-    - scoring : Liste de métriques à utiliser pour l'évaluation (par défaut, utilise Accuracy, Adjusted Rand Score,
-                Recall, Precision, et F1 Score).
-    - cv : Nombre de folds pour la validation croisée (par défaut, 5).
-
-    Returns:
-    - metrics : Dictionnaire contenant les métriques calculées.
-    """
     if scoring is None:
-        # Définition des métriques par défaut
         scoring = {
             'Accuracy': make_scorer(accuracy_score),
             'Adjusted Rand Score': make_scorer(adjusted_rand_score),
@@ -179,7 +161,7 @@ def perform_model_with_cross_validation(model, X_train, y_train, X_test, y_test,
     # Entraînement du modèle avec validation croisée
     cv_results = cross_validate(model, X_train, y_train, scoring=scoring, cv=cv, return_train_score=False)
 
-    # Prédictions sur l'ensemble de test
+    # Prédictions sur l'ensemble de test après entraînement final
     model.fit(X_train, y_train)
     predictions = model.predict(X_test)
 
@@ -190,30 +172,30 @@ def perform_model_with_cross_validation(model, X_train, y_train, X_test, y_test,
     precision = precision_score(y_test, predictions, average='weighted')
     f1 = f1_score(y_test, predictions, average='weighted')
 
-    # Affichage des métriques
+    # Affichage des métriques de validation croisée
     print("Cross-Validation Scores:")
     for metric, values in cv_results.items():
         print(f"{metric}: {np.mean(values):.4f} (± {np.std(values):.4f})")
 
+    # Affichage des métriques sur l'ensemble de test
     print("\nTest Set Metrics:")
-    metrics = {
-        'Accuracy': accuracy,
-        'Adjusted Rand Score': ari_score,
-        'Recall': recall,
-        'Precision': precision,
-        'F1 Score': f1
+    test_metrics = {
+        'Test Accuracy': accuracy,
+        'Test Adjusted Rand Score': ari_score,
+        'Test Recall': recall,
+        'Test Precision': precision,
+        'Test F1 Score': f1
     }
-    for metric, value in metrics.items():
+    for metric, value in test_metrics.items():
         print(f'{metric}: {value:.4f}')
 
     # Extraction des noms uniques des catégories
     category_names = np.unique(np.concatenate((y_test, y_train)))
 
-    # Création de la matrice de confusion
+    # Création et affichage de la matrice de confusion
     conf_matrix = confusion_matrix(y_test, predictions, labels=category_names)
     plt.figure(figsize=(10, 8))
-    sns.heatmap(conf_matrix, annot=True, fmt="d", cmap='Blues', xticklabels=category_names,
-                yticklabels=category_names)
+    sns.heatmap(conf_matrix, annot=True, fmt="d", cmap='Blues', xticklabels=category_names, yticklabels=category_names)
     plt.title('Matrice de confusion')
     plt.xlabel('Prédit')
     plt.ylabel('Vrai')
@@ -221,4 +203,5 @@ def perform_model_with_cross_validation(model, X_train, y_train, X_test, y_test,
     plt.yticks(rotation=0)
     plt.show()
 
-    return metrics
+    # Retourner les métriques
+    return {'cv_results': cv_results, **test_metrics}
