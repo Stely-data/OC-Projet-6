@@ -6,6 +6,8 @@ from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 from nltk.stem.wordnet import WordNetLemmatizer
 
+from sklearn.manifold import TSNE
+
 from sklearn.cluster import KMeans
 import pandas as pd
 from sklearn import metrics
@@ -99,12 +101,11 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
     - silhouette_avg : le score de silhouette moyen pour l'évaluation des clusters.
     - ari_score : l'Adjusted Rand Index score pour l'évaluation des clusters.
     - accuracy : l'accuracy score pour évaluer la précision des clusters alignés avec les vraies catégories.
-    - clusters : les étiquettes de clusters prédites par K-Means.
     """
     # Initialisation de K-Means
     # kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
-    kmeans = KMeans(n_clusters=7, n_init=50, max_iter=400, tol=1e-5, algorithm='elkan', init='k-means++',
-                    random_state=42)
+    kmeans = KMeans(n_clusters=n_clusters, n_init=50, max_iter=400, tol=1e-5, algorithm='elkan', init='k-means++',
+                    random_state=random_state)
 
     # Application de K-Means sur les données réduites
     kmeans.fit(X_data)
@@ -115,29 +116,23 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
     def conf_mat_transform(y_true, y_pred):
         conf_mat = metrics.confusion_matrix(y_true, y_pred)
         corresp = np.argmax(conf_mat, axis=0)
-
         return pd.Series(y_pred).apply(lambda x: corresp[x])
 
-    # Réaligner les étiquettes de clusters prédites avec les vraies étiquettes
     clusters_aligned = conf_mat_transform(true_labels, clusters)
 
-    # Évaluation avec la mesure Silhouette
     silhouette_avg = silhouette_score(X_data, clusters_aligned)
-    print(f'Silhouette Score: {silhouette_avg:.4f}')
-
-    # Comparaison avec les vraies catégories si disponibles
     ari_score = adjusted_rand_score(true_labels, clusters_aligned)
-    print(f'Adjusted Rand Score: {ari_score:.4f}')
-
-    # Calcul de l'accuracy
     accuracy = accuracy_score(true_labels, clusters_aligned)
+
+    # Affichage des scores
+    print(f'Silhouette Score: {silhouette_avg:.4f}')
+    print(f'Adjusted Rand Score: {ari_score:.4f}')
     print(f'Accuracy: {accuracy:.4f}')
 
     # Création de la matrice de confusion
     conf_matrix = confusion_matrix(true_labels, clusters_aligned)
     plt.figure(figsize=(10, 8))
-    sns.heatmap(conf_matrix, annot=True, fmt="d", cmap='Blues', xticklabels=label_names,
-                yticklabels=label_names)
+    sns.heatmap(conf_matrix, annot=True, fmt="d", cmap='Blues', xticklabels=label_names, yticklabels=label_names)
     plt.title('Matrice de confusion')
     plt.xlabel('Prédit')
     plt.ylabel('Vrai')
@@ -145,7 +140,12 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
     plt.yticks(rotation=0)
     plt.show()
 
-    return silhouette_avg, ari_score, accuracy, clusters
+    # Retourne tous les résultats dans un seul dictionnaire
+    return {
+        'Silhouette Score': silhouette_avg,
+        'Adjusted Rand Score': ari_score,
+        'Accuracy': accuracy
+    }
 
 
 def perform_model_with_cross_validation(model, X_train, y_train, X_test, y_test, scoring=None, cv=5):
@@ -205,3 +205,37 @@ def perform_model_with_cross_validation(model, X_train, y_train, X_test, y_test,
 
     # Retourner les métriques
     return {'cv_results': cv_results, **test_metrics}
+
+
+def plot_tsne_grid(data, categories_encoded, n_rows=3, n_cols=2):
+    perplexities = [20, 30, 40, 60, 70, 100]
+    # Création d'une figure avec plusieurs sous-graphiques
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 30))
+
+    # Aplatir la liste des axes pour une indexation facile
+    axes = axes.flatten()
+
+    # Boucle sur chaque valeur de perplexité
+    for i, perplexity in enumerate(perplexities):
+        # Création de l'objet TSNE avec la perplexité actuelle
+        tsne = TSNE(n_components=2, verbose=1, perplexity=perplexity, random_state=42)
+        tsne_results = tsne.fit_transform(data)
+
+        # Visualisation avec t-SNE sur le sous-graphique correspondant
+        scatter = axes[i].scatter(tsne_results[:, 0], tsne_results[:, 1], c=categories_encoded, cmap='tab10')
+
+        # Ajout d'un titre au sous-graphique
+        axes[i].set_title(f't-SNE avec perplexité = {perplexity}')
+
+        # Ajout des labels des axes
+        axes[i].set_xlabel('Composante t-SNE 1')
+        axes[i].set_ylabel('Composante t-SNE 2')
+
+        # Création de la légende, ajoutée une seule fois
+        if i == 0:
+            handles, labels = scatter.legend_elements(prop="colors", alpha=0.6)
+            fig.legend(handles, labels, loc='upper right', title="Catégories")
+
+    # Ajustement des sous-graphiques pour éviter les chevauchements
+    plt.tight_layout()
+    plt.show()
