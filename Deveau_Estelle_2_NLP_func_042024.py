@@ -12,10 +12,7 @@ from sklearn.cluster import KMeans
 import pandas as pd
 from sklearn import metrics
 from sklearn.metrics import silhouette_score, adjusted_rand_score
-
-from sklearn.model_selection import cross_validate
-from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_score, \
-    confusion_matrix, make_scorer
+from sklearn.metrics import accuracy_score, confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
@@ -146,66 +143,6 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
         'Adjusted Rand Score': ari_score,
         'Accuracy': accuracy
     }
-
-
-def perform_model_with_cross_validation(model, X_train, y_train, X_test, y_test, scoring=None, cv=5):
-    if scoring is None:
-        scoring = {
-            'Accuracy': make_scorer(accuracy_score),
-            'Adjusted Rand Score': make_scorer(adjusted_rand_score),
-            'Recall': make_scorer(recall_score, average='weighted'),
-            'Precision': make_scorer(precision_score, average='weighted'),
-            'F1 Score': make_scorer(f1_score, average='weighted')
-        }
-
-    # Entraînement du modèle avec validation croisée
-    cv_results = cross_validate(model, X_train, y_train, scoring=scoring, cv=cv, return_train_score=False)
-
-    # Prédictions sur l'ensemble de test après entraînement final
-    model.fit(X_train, y_train)
-    predictions = model.predict(X_test)
-
-    # Calcul des métriques sur l'ensemble de test
-    accuracy = accuracy_score(y_test, predictions)
-    ari_score = adjusted_rand_score(y_test, predictions)
-    recall = recall_score(y_test, predictions, average='weighted')
-    precision = precision_score(y_test, predictions, average='weighted')
-    f1 = f1_score(y_test, predictions, average='weighted')
-
-    # Affichage des métriques de validation croisée
-    print("Cross-Validation Scores:")
-    for metric, values in cv_results.items():
-        print(f"{metric}: {np.mean(values):.4f} (± {np.std(values):.4f})")
-
-    # Affichage des métriques sur l'ensemble de test
-    print("\nTest Set Metrics:")
-    test_metrics = {
-        'Test Accuracy': accuracy,
-        'Test Adjusted Rand Score': ari_score,
-        'Test Recall': recall,
-        'Test Precision': precision,
-        'Test F1 Score': f1
-    }
-    for metric, value in test_metrics.items():
-        print(f'{metric}: {value:.4f}')
-
-    # Extraction des noms uniques des catégories
-    category_names = np.unique(np.concatenate((y_test, y_train)))
-
-    # Création et affichage de la matrice de confusion
-    conf_matrix = confusion_matrix(y_test, predictions, labels=category_names)
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(conf_matrix, annot=True, fmt="d", cmap='Blues', xticklabels=category_names, yticklabels=category_names)
-    plt.title('Matrice de confusion')
-    plt.xlabel('Prédit')
-    plt.ylabel('Vrai')
-    plt.xticks(rotation=90)
-    plt.yticks(rotation=0)
-    plt.show()
-
-    # Retourner les métriques
-    return {'cv_results': cv_results, **test_metrics}
-
 
 def plot_tsne_grid(data, categories_encoded, n_rows=3, n_cols=2):
     perplexities = [20, 30, 40, 60, 70, 100]
