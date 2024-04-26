@@ -7,9 +7,15 @@ from sklearn.cluster import KMeans
 import pandas as pd
 from sklearn import metrics
 from sklearn.metrics import silhouette_score, adjusted_rand_score
-from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_score, \
-    confusion_matrix, make_scorer
+from sklearn.metrics import accuracy_score, confusion_matrix
 import seaborn as sns
+from sklearn.model_selection import train_test_split
+from keras.callbacks import ModelCheckpoint, EarlyStopping
+from keras.preprocessing.image import load_img, img_to_array
+from keras.applications import VGG16
+from keras.optimizers import RMSprop
+
+
 
 def process_image(image_path):
     """Traitement d'une image avec SIFT et affichage des résultats."""
@@ -35,6 +41,7 @@ def process_image(image_path):
 
     return kp, des, image
 
+
 def display_keypoints(image, keypoints, title="Image avec Points Clés SIFT"):
     """Affichage des points clés sur l'image."""
     img_with_keypoints = cv2.drawKeypoints(image, keypoints, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
@@ -42,6 +49,7 @@ def display_keypoints(image, keypoints, title="Image avec Points Clés SIFT"):
     plt.title(title)
     plt.axis('off')
     plt.show()
+
 
 def process_images_concurrently(image_paths, max_workers=6):
     """Traite les images en parallèle."""
@@ -61,13 +69,10 @@ def process_images_concurrently(image_paths, max_workers=6):
 
     return sift_keypoints_by_img, sift_keypoints_all
 
-def plot_tsne_grid(data, categories_encoded, label_names, n_rows=2, n_cols=2):
-    perplexities = [20, 40, 70, 100]
-    # Création d'une figure avec plusieurs sous-graphiques
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(23, 20))
 
-    # Aplatir la liste des axes pour une indexation facile
-    axes = axes.flatten()
+def plot_tsne(data, categories_encoded, label_names, perplexity):
+    # Création de la figure
+    plt.figure(figsize=(6, 6))
 
     # Mapper les catégories encodées vers les noms réels
     categories_color_mapping = dict(zip(np.unique(categories_encoded), label_names))
@@ -78,23 +83,25 @@ def plot_tsne_grid(data, categories_encoded, label_names, n_rows=2, n_cols=2):
                                   markerfacecolor=category_colors[i], markersize=12)
                        for i in range(len(unique_categories))]
 
-    # Boucle sur chaque valeur de perplexité
-    for i, perplexity in enumerate(perplexities):
-        tsne = TSNE(n_components=2, verbose=1, perplexity=perplexity, random_state=42)
-        tsne_results = tsne.fit_transform(data)
-        categories_mapped = np.vectorize(categories_color_mapping.get)(categories_encoded)
+    # Création de l'objet t-SNE avec la perplexité spécifiée
+    tsne = TSNE(n_components=2, verbose=1, perplexity=perplexity, random_state=42)
+    tsne_results = tsne.fit_transform(data)
+    categories_mapped = np.vectorize(categories_color_mapping.get)(categories_encoded)
 
-        sns.scatterplot(x=tsne_results[:, 0], y=tsne_results[:, 1], hue=categories_mapped,
-                        palette=category_colors, ax=axes[i], legend=False, s=50, alpha=0.6)
+    # Tracé du scatter plot avec t-SNE
+    sns.scatterplot(x=tsne_results[:, 0], y=tsne_results[:, 1], hue=categories_mapped,
+                    palette=category_colors, legend=False, s=50, alpha=0.6)
 
-        axes[i].set_title(f't-SNE avec perplexité = {perplexity}')
-        axes[i].set_xlabel('Composante t-SNE 1')
-        axes[i].set_ylabel('Composante t-SNE 2')
+    # Ajout de titres et de labels d'axes
+    plt.title(f't-SNE avec perplexité = {perplexity}')
+    plt.xlabel('Composante t-SNE 1')
+    plt.ylabel('Composante t-SNE 2')
 
-    # Ajouter la légende en haut à droite de la figure entière, à l'extérieur du dernier sous-graphique
-    fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1, 1), title="Catégories")
-    plt.tight_layout()
+    # Ajout de la légende en haut à droite de la figure
+    plt.legend(handles=legend_elements, loc='center left', bbox_to_anchor=(1.02, 0.5), title="Catégories")
+
     plt.show()
+
 
 def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=42):
     """
@@ -142,7 +149,7 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
 
     # Création de la matrice de confusion
     conf_matrix = confusion_matrix(true_labels, clusters_aligned)
-    plt.figure(figsize=(10, 10))
+    plt.figure(figsize=(8, 6))
     sns.heatmap(conf_matrix, annot=True, fmt="d", cmap='Blues', xticklabels=label_names, yticklabels=label_names)
     plt.title('Matrice de confusion')
     plt.xlabel('Prédit')
@@ -156,7 +163,7 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
     X_data['cluster'] = clusters_aligned
     n_clusters = len(np.unique(clusters_aligned))
     palette = sns.color_palette('tab10', n_colors=n_clusters)
-    plt.figure(figsize=(12, 10))
+    plt.figure(figsize=(8, 6))
     sns.scatterplot(
         x="tsne1", y="tsne2",
         hue="cluster",
@@ -177,3 +184,59 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
         'Adjusted Rand Score': ari_score,
         'Accuracy': accuracy
     }
+
+def image_prep_fct(image_paths, preprocess_function, target_size=(224, 224)):
+    prepared_images = []
+    for img_path in image_paths:
+        img = load_img(img_path, target_size=target_size)
+        img = img_to_array(img)
+        img = preprocess_function(img)  # Appliquez la fonction de prétraitement spécifique au modèle
+        prepared_images.append(img)
+    return np.array(prepared_images)
+
+def prepare_data(paths_train, paths_val, paths_test, preprocess_function, target_size):
+    X_train = image_prep_fct(paths_train, preprocess_function, target_size=target_size)
+    X_val = image_prep_fct(paths_val, preprocess_function, target_size=target_size)
+    X_test = image_prep_fct(paths_test, preprocess_function, target_size=target_size)
+    return X_train, X_val, X_test
+
+def train_model(model, X_train, y_train, X_val, y_val, model_save_path):
+    checkpoint = ModelCheckpoint(model_save_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min', save_weights_only=True)
+    es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=5)
+    callbacks_list = [checkpoint, es]
+    model.compile(loss="categorical_crossentropy", optimizer=RMSprop(), metrics=["accuracy"])
+    history = model.fit(X_train, y_train, epochs=50, batch_size=64, callbacks=callbacks_list, validation_data=(X_val, y_val), verbose=1)
+    return model, history
+
+def evaluate_model(model, X_train, y_train, X_val, y_val, X_test, y_test, best_weights_path):
+    # Score du dernier epoch
+    loss, accuracy = model.evaluate(X_train, y_train, verbose=True)
+    print("Training Accuracy after last epoch: {:.4f}".format(accuracy))
+    print()
+
+    # Évaluation sur l'ensemble de test avec les poids finaux après toutes les époques
+    loss, accuracy = model.evaluate(X_test, y_test, verbose=True)
+    print("Test Accuracy after last epoch: {:.4f}".format(accuracy))
+    print()
+
+    # Chargement des poids de l'epoch optimal
+    model.load_weights(best_weights_path)
+
+    # Réévaluation sur l'ensemble de validation avec les poids de l'epoch optimal
+    loss, accuracy = model.evaluate(X_val, y_val, verbose=True)
+    print("Validation Accuracy (best epoch): {:.4f}".format(accuracy))
+
+    # Réévaluation sur l'ensemble de test avec les poids de l'epoch optimal
+    loss, accuracy = model.evaluate(X_test, y_test, verbose=True)
+    print("Test Accuracy (best epoch): {:.4f}".format(accuracy))
+
+    # Prédire les étiquettes pour l'ensemble de test
+    predictions = model.predict(X_test)
+    predicted_labels = np.argmax(predictions, axis=1)
+
+    # Calculer l'ARI
+    ari_score = adjusted_rand_score(y_test, predicted_labels)
+    print("Adjusted Rand Index (ARI): {:.4f}".format(ari_score))
+
+    return loss, accuracy, ari_score
+
