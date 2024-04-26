@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from concurrent.futures import ThreadPoolExecutor
 from sklearn.manifold import TSNE
+from scipy.optimize import linear_sum_assignment
 from sklearn.cluster import KMeans
 import pandas as pd
 from sklearn import metrics
@@ -14,7 +15,7 @@ from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.preprocessing.image import load_img, img_to_array
 from keras.applications import VGG16
 from keras.optimizers import RMSprop
-
+from sklearn.model_selection import GridSearchCV
 
 
 def process_image(image_path):
@@ -122,8 +123,9 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
     """
     # Initialisation de K-Means
     # kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
-    kmeans = KMeans(n_clusters=n_clusters, n_init=50, max_iter=400, tol=1e-5, algorithm='elkan', init='k-means++',
-                    random_state=random_state)
+    #kmeans = KMeans(n_clusters=n_clusters, n_init=50, max_iter=400, tol=1e-5, algorithm='elkan', init='k-means++',
+    #                random_state=random_state)
+    kmeans = KMeans(n_clusters=n_clusters, n_init=100, random_state=random_state)
 
     # Application de K-Means sur les données réduites
     kmeans.fit(X_data)
@@ -131,10 +133,25 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
     # Prédiction des clusters
     clusters = kmeans.predict(X_data)
 
+#    def conf_mat_transform(y_true, y_pred):
+#        conf_mat = metrics.confusion_matrix(y_true, y_pred)
+#        corresp = np.argmax(conf_mat, axis=0)
+#        return pd.Series(y_pred).apply(lambda x: corresp[x])
+
     def conf_mat_transform(y_true, y_pred):
-        conf_mat = metrics.confusion_matrix(y_true, y_pred)
-        corresp = np.argmax(conf_mat, axis=0)
-        return pd.Series(y_pred).apply(lambda x: corresp[x])
+        # Calcul de la matrice de confusion
+        conf_mat = confusion_matrix(y_true, y_pred)
+
+        # Note : linear_sum_assignment minimise le coût, donc nous utilisons -conf_mat pour maximiser les correspondances
+        row_ind, col_ind = linear_sum_assignment(-conf_mat)
+
+        # row_ind[i] correspond à la vraie catégorie, col_ind[i] à la catégorie prédite
+        mapping = {col_ind[i]: row_ind[i] for i in range(len(row_ind))}
+
+        # Transformer y_pred en utilisant le mapping trouvé
+        y_pred_transformed = pd.Series(y_pred).apply(lambda x: mapping.get(x, x))
+
+        return y_pred_transformed
 
     clusters_aligned = conf_mat_transform(true_labels, clusters)
 
@@ -185,20 +202,23 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
         'Accuracy': accuracy
     }
 
+
 def image_prep_fct(image_paths, preprocess_function, target_size=(224, 224)):
     prepared_images = []
     for img_path in image_paths:
         img = load_img(img_path, target_size=target_size)
         img = img_to_array(img)
-        img = preprocess_function(img)  # Appliquez la fonction de prétraitement spécifique au modèle
+        img = preprocess_function(img)
         prepared_images.append(img)
     return np.array(prepared_images)
+
 
 def prepare_data(paths_train, paths_val, paths_test, preprocess_function, target_size):
     X_train = image_prep_fct(paths_train, preprocess_function, target_size=target_size)
     X_val = image_prep_fct(paths_val, preprocess_function, target_size=target_size)
     X_test = image_prep_fct(paths_test, preprocess_function, target_size=target_size)
     return X_train, X_val, X_test
+
 
 def train_model(model, X_train, y_train, X_val, y_val, model_save_path):
     checkpoint = ModelCheckpoint(model_save_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min', save_weights_only=True)
@@ -207,6 +227,7 @@ def train_model(model, X_train, y_train, X_val, y_val, model_save_path):
     model.compile(loss="categorical_crossentropy", optimizer=RMSprop(), metrics=["accuracy"])
     history = model.fit(X_train, y_train, epochs=50, batch_size=64, callbacks=callbacks_list, validation_data=(X_val, y_val), verbose=1)
     return model, history
+
 
 def evaluate_model(model, X_train, y_train, X_val, y_val, X_test, y_test, best_weights_path):
     # Score du dernier epoch
@@ -235,8 +256,36 @@ def evaluate_model(model, X_train, y_train, X_val, y_val, X_test, y_test, best_w
     predicted_labels = np.argmax(predictions, axis=1)
 
     # Calculer l'ARI
-    ari_score = adjusted_rand_score(y_test, predicted_labels)
+    true_labels = np.argmax(y_test, axis=1)
+    ari_score = adjusted_rand_score(true_labels, predicted_labels)
     print("Adjusted Rand Index (ARI): {:.4f}".format(ari_score))
 
     return loss, accuracy, ari_score
 
+
+def train_model_with_search(model, X_train, y_train, model_save_path):
+    # Définir les hyperparamètres à rechercher
+    param_grid = {
+        'batch_size': [32, 64, 128],
+        'epochs': [20, 30, 40]
+    }
+
+    # Créer le modèle Keras wrapper pour être compatible avec GridSearchCV
+    keras_model = KerasClassifier(build_fn=model, verbose=0)
+
+    # Effectuer la recherche par grille
+    grid = GridSearchCV(estimator=keras_model, param_grid=param_grid, n_jobs=-1, cv=3)
+    grid_result = grid.fit(X_train, y_train)
+
+    # Afficher les résultats
+    print("Meilleur score : ", grid_result.best_score_)
+    print("Meilleurs paramètres : ", grid_result.best_params_)
+
+    # Entraîner le modèle avec les meilleurs paramètres
+    best_model = grid_result.best_estimator_
+    best_model.fit(X_train, y_train)
+
+    # Enregistrer le modèle
+    best_model.save(model_save_path)
+
+    return best_model
