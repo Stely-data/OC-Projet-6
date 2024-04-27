@@ -85,7 +85,7 @@ def plot_tsne(data, categories_encoded, label_names, perplexity):
                        for i in range(len(unique_categories))]
 
     # Création de l'objet t-SNE avec la perplexité spécifiée
-    tsne = TSNE(n_components=2, verbose=1, perplexity=perplexity, random_state=42)
+    tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42, n_iter=2000, init='random')
     tsne_results = tsne.fit_transform(data)
     categories_mapped = np.vectorize(categories_color_mapping.get)(categories_encoded)
 
@@ -132,11 +132,6 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
 
     # Prédiction des clusters
     clusters = kmeans.predict(X_data)
-
-#    def conf_mat_transform(y_true, y_pred):
-#        conf_mat = metrics.confusion_matrix(y_true, y_pred)
-#        corresp = np.argmax(conf_mat, axis=0)
-#        return pd.Series(y_pred).apply(lambda x: corresp[x])
 
     def conf_mat_transform(y_true, y_pred):
         # Calcul de la matrice de confusion
@@ -203,11 +198,12 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
     }
 
 
-def image_prep_fct(image_paths, preprocess_function, target_size=(224, 224)):
+def image_prep_fct(image_paths, preprocess_function, target_size=(224, 224, 3)):
     prepared_images = []
     for img_path in image_paths:
         img = load_img(img_path, target_size=target_size)
         img = img_to_array(img)
+        img = img.reshape((img.shape[0], img.shape[1], img.shape[2]))
         img = preprocess_function(img)
         prepared_images.append(img)
     return np.array(prepared_images)
