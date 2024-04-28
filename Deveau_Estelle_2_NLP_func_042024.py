@@ -7,6 +7,7 @@ from nltk.stem import PorterStemmer
 from nltk.stem.wordnet import WordNetLemmatizer
 
 from sklearn.manifold import TSNE
+from scipy.optimize import linear_sum_assignment
 
 from sklearn.cluster import KMeans
 import pandas as pd
@@ -100,9 +101,7 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
     - accuracy : l'accuracy score pour évaluer la précision des clusters alignés avec les vraies catégories.
     """
     # Initialisation de K-Means
-    # kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
-    kmeans = KMeans(n_clusters=n_clusters, n_init=50, max_iter=400, tol=1e-5, algorithm='elkan', init='k-means++',
-                    random_state=random_state)
+    kmeans = KMeans(n_clusters=n_clusters, n_init=100, random_state=random_state)
 
     # Application de K-Means sur les données réduites
     kmeans.fit(X_data)
@@ -111,9 +110,19 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
     clusters = kmeans.predict(X_data)
 
     def conf_mat_transform(y_true, y_pred):
-        conf_mat = metrics.confusion_matrix(y_true, y_pred)
-        corresp = np.argmax(conf_mat, axis=0)
-        return pd.Series(y_pred).apply(lambda x: corresp[x])
+        # Calcul de la matrice de confusion
+        conf_mat = confusion_matrix(y_true, y_pred)
+
+        # Note : linear_sum_assignment minimise le coût, donc nous utilisons -conf_mat pour maximiser les correspondances
+        row_ind, col_ind = linear_sum_assignment(-conf_mat)
+
+        # row_ind[i] correspond à la vraie catégorie, col_ind[i] à la catégorie prédite
+        mapping = {col_ind[i]: row_ind[i] for i in range(len(row_ind))}
+
+        # Transformer y_pred en utilisant le mapping trouvé
+        y_pred_transformed = pd.Series(y_pred).apply(lambda x: mapping.get(x, x))
+
+        return y_pred_transformed
 
     clusters_aligned = conf_mat_transform(true_labels, clusters)
 
@@ -128,13 +137,33 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
 
     # Création de la matrice de confusion
     conf_matrix = confusion_matrix(true_labels, clusters_aligned)
-    plt.figure(figsize=(10, 8))
+    plt.figure(figsize=(8, 6))
     sns.heatmap(conf_matrix, annot=True, fmt="d", cmap='Blues', xticklabels=label_names, yticklabels=label_names)
     plt.title('Matrice de confusion')
     plt.xlabel('Prédit')
     plt.ylabel('Vrai')
     plt.xticks(rotation=90)
     plt.yticks(rotation=0)
+    plt.show()
+
+    # Ajout de la visualisation t-SNE colorée par clusters
+    X_data = pd.DataFrame(X_data, columns=['tsne1', 'tsne2'])
+    X_data['cluster'] = clusters_aligned
+    n_clusters = len(np.unique(clusters_aligned))
+    palette = sns.color_palette('tab10', n_colors=n_clusters)
+    plt.figure(figsize=(8, 6))
+    sns.scatterplot(
+        x="tsne1", y="tsne2",
+        hue="cluster",
+        palette=palette,
+        s=50, alpha=0.6,
+        data=X_data
+    )
+    plt.title('TSNE selon les clusters', fontsize=30, pad=35, fontweight='bold')
+    plt.xlabel('tsne1')
+    plt.ylabel('tsne2')
+    plt.legend(title='Cluster', bbox_to_anchor=(1.05, 1), loc='upper left', prop={'size': 12})
+    plt.tight_layout()
     plt.show()
 
     # Retourne tous les résultats dans un seul dictionnaire
@@ -144,35 +173,36 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
         'Accuracy': accuracy
     }
 
-def plot_tsne_grid(data, categories_encoded, n_rows=3, n_cols=2):
-    perplexities = [20, 30, 40, 60, 70, 100]
-    # Création d'une figure avec plusieurs sous-graphiques
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 30))
+def plot_tsne(data, categories_encoded, label_names, perplexity):
+    # Création de la figure
+    plt.figure(figsize=(6, 6))
 
-    # Aplatir la liste des axes pour une indexation facile
-    axes = axes.flatten()
+    # Mapper les catégories encodées vers les noms réels
+    categories_color_mapping = dict(zip(np.unique(categories_encoded), label_names))
+    unique_categories = np.unique(categories_encoded)
+    category_colors = sns.color_palette('tab10', len(unique_categories))
 
-    # Boucle sur chaque valeur de perplexité
-    for i, perplexity in enumerate(perplexities):
-        # Création de l'objet TSNE avec la perplexité actuelle
-        tsne = TSNE(n_components=2, verbose=1, perplexity=perplexity, random_state=42)
-        tsne_results = tsne.fit_transform(data)
+    legend_elements = [plt.Line2D([0], [0], marker='o', color='w', label=label_names[i],
+                                  markerfacecolor=category_colors[i], markersize=12)
+                       for i in range(len(unique_categories))]
 
-        # Visualisation avec t-SNE sur le sous-graphique correspondant
-        scatter = axes[i].scatter(tsne_results[:, 0], tsne_results[:, 1], c=categories_encoded, cmap='tab10')
+    # Création de l'objet t-SNE avec la perplexité spécifiée
+    tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42, n_iter=2000, init='random')
+    tsne_results = tsne.fit_transform(data)
+    categories_mapped = np.vectorize(categories_color_mapping.get)(categories_encoded)
 
-        # Ajout d'un titre au sous-graphique
-        axes[i].set_title(f't-SNE avec perplexité = {perplexity}')
+    # Tracé du scatter plot avec t-SNE
+    sns.scatterplot(x=tsne_results[:, 0], y=tsne_results[:, 1], hue=categories_mapped,
+                    palette=category_colors, legend=False, s=50, alpha=0.6)
 
-        # Ajout des labels des axes
-        axes[i].set_xlabel('Composante t-SNE 1')
-        axes[i].set_ylabel('Composante t-SNE 2')
+    # Ajout de titres et de labels d'axes
+    plt.title(f't-SNE avec perplexité = {perplexity}')
+    plt.xlabel('Composante t-SNE 1')
+    plt.ylabel('Composante t-SNE 2')
 
-        # Création de la légende, ajoutée une seule fois
-        if i == 0:
-            handles, labels = scatter.legend_elements(prop="colors", alpha=0.6)
-            fig.legend(handles, labels, loc='upper right', title="Catégories")
+    # Ajout de la légende en haut à droite de la figure
+    plt.legend(handles=legend_elements, loc='center left', bbox_to_anchor=(1.02, 0.5), title="Catégories")
 
-    # Ajustement des sous-graphiques pour éviter les chevauchements
-    plt.tight_layout()
     plt.show()
+
+    return tsne_results
