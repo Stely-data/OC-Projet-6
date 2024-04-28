@@ -122,9 +122,6 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
     - accuracy : l'accuracy score pour évaluer la précision des clusters alignés avec les vraies catégories.
     """
     # Initialisation de K-Means
-    # kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
-    #kmeans = KMeans(n_clusters=n_clusters, n_init=50, max_iter=400, tol=1e-5, algorithm='elkan', init='k-means++',
-    #                random_state=random_state)
     kmeans = KMeans(n_clusters=n_clusters, n_init=100, random_state=random_state)
 
     # Application de K-Means sur les données réduites
@@ -225,27 +222,29 @@ def train_model(model, X_train, y_train, X_val, y_val, model_save_path):
     return model, history
 
 
-def evaluate_model(model, X_train, y_train, X_val, y_val, X_test, y_test, best_weights_path):
-    # Score du dernier epoch
-    loss, accuracy = model.evaluate(X_train, y_train, verbose=True)
-    print("Training Accuracy after last epoch: {:.4f}".format(accuracy))
-    print()
+def evaluate_model(model, X_train, y_train, X_val, y_val, X_test, y_test, best_weights_path='none'):
 
-    # Évaluation sur l'ensemble de test avec les poids finaux après toutes les époques
-    loss, accuracy = model.evaluate(X_test, y_test, verbose=True)
-    print("Test Accuracy after last epoch: {:.4f}".format(accuracy))
-    print()
+    if best_weights_path != 'none':
+        # Score du dernier epoch
+        loss, accuracy = model.evaluate(X_train, y_train, verbose=True)
+        print("Training Accuracy after last epoch: {:.4f}".format(accuracy))
+        print()
 
-    # Chargement des poids de l'epoch optimal
-    model.load_weights(best_weights_path)
+        # Évaluation sur l'ensemble de test avec les poids finaux après toutes les époques
+        loss, accuracy = model.evaluate(X_test, y_test, verbose=True)
+        print("Test Accuracy after last epoch: {:.4f}".format(accuracy))
+        print()
+
+        # Chargement des poids de l'epoch optimal
+        model.load_weights(best_weights_path)
 
     # Réévaluation sur l'ensemble de validation avec les poids de l'epoch optimal
     loss, accuracy = model.evaluate(X_val, y_val, verbose=True)
-    print("Validation Accuracy (best epoch): {:.4f}".format(accuracy))
+    print("Validation Accuracy (best): {:.4f}".format(accuracy))
 
     # Réévaluation sur l'ensemble de test avec les poids de l'epoch optimal
     loss, accuracy = model.evaluate(X_test, y_test, verbose=True)
-    print("Test Accuracy (best epoch): {:.4f}".format(accuracy))
+    print("Test Accuracy (best): {:.4f}".format(accuracy))
 
     # Prédire les étiquettes pour l'ensemble de test
     predictions = model.predict(X_test)
