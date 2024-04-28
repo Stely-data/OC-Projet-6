@@ -16,6 +16,7 @@ from keras.preprocessing.image import load_img, img_to_array
 from keras.applications import VGG16
 from keras.optimizers import RMSprop
 from sklearn.model_selection import GridSearchCV
+import time
 
 
 def process_image(image_path):
@@ -195,7 +196,7 @@ def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=
     }
 
 
-def image_prep_fct(image_paths, preprocess_function, target_size=(224, 224, 3)):
+def image_prep_fct(image_paths, preprocess_function, target_size=(224, 224)):
     prepared_images = []
     for img_path in image_paths:
         img = load_img(img_path, target_size=target_size)
@@ -203,7 +204,7 @@ def image_prep_fct(image_paths, preprocess_function, target_size=(224, 224, 3)):
         img = img.reshape((img.shape[0], img.shape[1], img.shape[2]))
         img = preprocess_function(img)
         prepared_images.append(img)
-    return np.array(prepared_images)
+    return np.vstack(prepared_images)
 
 
 def prepare_data(paths_train, paths_val, paths_test, preprocess_function, target_size):
@@ -214,16 +215,24 @@ def prepare_data(paths_train, paths_val, paths_test, preprocess_function, target
 
 
 def train_model(model, X_train, y_train, X_val, y_val, model_save_path):
+    # Début du chronométrage
+    start_time = time.time()
     checkpoint = ModelCheckpoint(model_save_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min', save_weights_only=True)
     es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=5)
     callbacks_list = [checkpoint, es]
     model.compile(loss="categorical_crossentropy", optimizer=RMSprop(), metrics=["accuracy"])
     history = model.fit(X_train, y_train, epochs=50, batch_size=64, callbacks=callbacks_list, validation_data=(X_val, y_val), verbose=1)
-    return model, history
+
+    # Fin du chronométrage
+    end_time = time.time()
+
+    # Calcul de la durée
+    duration = end_time - start_time
+
+    return model, history, duration
 
 
 def evaluate_model(model, X_train, y_train, X_val, y_val, X_test, y_test, best_weights_path='none'):
-
     if best_weights_path != 'none':
         # Score du dernier epoch
         loss, accuracy = model.evaluate(X_train, y_train, verbose=True)
@@ -258,29 +267,38 @@ def evaluate_model(model, X_train, y_train, X_val, y_val, X_test, y_test, best_w
     return loss, accuracy, ari_score
 
 
-def train_model_with_search(model, X_train, y_train, model_save_path):
+def train_model_with_search(build_model, X_train, y_train, X_val, y_val, model_save_path):
     # Définir les hyperparamètres à rechercher
     param_grid = {
         'batch_size': [32, 64, 128],
         'epochs': [20, 30, 40]
     }
 
-    # Créer le modèle Keras wrapper pour être compatible avec GridSearchCV
-    keras_model = KerasClassifier(build_fn=model, verbose=0)
+    # Callbacks pour la sauvegarde du meilleur modèle et l'arrêt précoce
+    checkpoint = ModelCheckpoint(model_save_path, monitor='val_loss', save_best_only=True, mode='min',
+                                 save_weights_only=True)
+    early_stopping = EarlyStopping(monitor='val_loss', mode='min', patience=5, verbose=1)
 
-    # Effectuer la recherche par grille
+    # Créer le modèle Keras wrapper pour être compatible avec GridSearchCV
+    keras_model = KerasClassifier(build_fn=lambda: build_model(), verbose=0)
+
+    # Configurer GridSearchCV avec le modèle Keras, en incluant les callbacks et les données de validation
     grid = GridSearchCV(estimator=keras_model, param_grid=param_grid, n_jobs=-1, cv=3)
-    grid_result = grid.fit(X_train, y_train)
+
+    # Exécution de la recherche par grille avec les données de validation
+    grid_result = grid.fit(X_train, y_train, validation_data=(X_val, y_val), callbacks=[checkpoint, early_stopping])
 
     # Afficher les résultats
     print("Meilleur score : ", grid_result.best_score_)
     print("Meilleurs paramètres : ", grid_result.best_params_)
 
     # Entraîner le modèle avec les meilleurs paramètres
-    best_model = grid_result.best_estimator_
-    best_model.fit(X_train, y_train)
+    best_model = grid_result.best_estimator_.model
+    best_model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=grid_result.best_params_['epochs'],
+                   batch_size=grid_result.best_params_['batch_size'], callbacks=[checkpoint, early_stopping], verbose=1)
 
     # Enregistrer le modèle
     best_model.save(model_save_path)
 
-    return best_model
+    return best_model, grid_result.best_params_, duration
+
