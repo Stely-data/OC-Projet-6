@@ -1,23 +1,37 @@
+# traitement d'image
 import cv2
+from keras.preprocessing.image import load_img, img_to_array
+
+# traitement de données
 import numpy as np
-import matplotlib.pyplot as plt
-from concurrent.futures import ThreadPoolExecutor
-from sklearn.manifold import TSNE
-from scipy.optimize import linear_sum_assignment
-from sklearn.cluster import KMeans
 import pandas as pd
+
+# ML
+from sklearn.manifold import TSNE
+from sklearn.cluster import KMeans
 from sklearn import metrics
 from sklearn.metrics import silhouette_score, adjusted_rand_score
 from sklearn.metrics import accuracy_score, confusion_matrix
-import seaborn as sns
-from sklearn.model_selection import train_test_split
-from keras.callbacks import ModelCheckpoint, EarlyStopping
-from keras.preprocessing.image import load_img, img_to_array
-from keras.applications import VGG16
-from keras.optimizers import RMSprop
-from sklearn.model_selection import GridSearchCV
-import time
+from sklearn.model_selection import train_test_split, GridSearchCV
 from scikeras.wrappers import KerasClassifier
+
+# deep learning
+from keras.applications import VGG16, InceptionResNetV2, DenseNet201
+from keras.optimizers import RMSprop
+from keras.callbacks import ModelCheckpoint, EarlyStopping
+from tensorflow.keras.models import Model, load_model
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dropout, Dense
+
+# visualisation
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# optimisation
+from scipy.optimize import linear_sum_assignment
+
+# temps et ressources processus
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 
 def process_image(image_path):
@@ -216,6 +230,50 @@ def prepare_data(paths_train, paths_val, paths_test, preprocess_function, target
     return X_train, X_val, X_test
 
 
+def create_model_fct(base_model_name='VGG16'):
+    """
+    Crée et compile un modèle de classification d'images basé sur un modèle CNN pré-entraîné.
+
+    Args:
+    - base_model_name (str): Nom du modèle CNN pré-entraîné à utiliser.
+
+    Returns:
+    - model: Le modèle Keras compilé.
+    """
+
+    # Sélection du modèle de base en fonction du nom fourni
+    if base_model_name == 'InceptionResNetV2':
+        base_model = InceptionResNetV2(include_top=False, weights="imagenet", input_shape=(299, 299, 3))
+    elif base_model_name == 'DenseNet201':
+        base_model = DenseNet201(include_top=False, weights="imagenet", input_shape=(224, 224, 3))
+    elif base_model_name == 'EfficientNetB7':
+        base_model = EfficientNetB7(include_top=False, weights="imagenet", input_shape=(600, 600, 3))
+    else:  # Le modèle par défaut est VGG16 si aucun nom valide n'est fourni
+        base_model = VGG16(include_top=False, weights="imagenet", input_shape=(224, 224, 3))
+
+    # extraction des features
+    for layer in base_model.layers:
+        layer.trainable = False
+
+    # Construction du modèle
+    x = base_model.output
+    x = GlobalAveragePooling2D()(x)
+    x = Dense(256, activation='relu')(x)
+    x = Dropout(0.5)(x)
+    predictions = Dense(7, activation='softmax')(x)
+
+    # Définition du nouveau modèle
+    model = Model(inputs=base_model.input, outputs=predictions)
+
+    # Compilation du modèle
+    model.compile(loss="categorical_crossentropy", optimizer='rmsprop', metrics=["accuracy"])
+
+    # Affichage du résumé du modèle
+    # model.summary()
+
+    return model
+
+
 def train_model(model, X_train, y_train, X_val, y_val, model_save_path):
     # Début du chronométrage
     start_time = time.time()
@@ -269,40 +327,47 @@ def evaluate_model(model, X_train, y_train, X_val, y_val, X_test, y_test, best_w
     return loss, accuracy, ari_score
 
 
-def train_model_with_search(build_model, X_train, y_train, X_val, y_val, model_save_path):
-    # Définir les hyperparamètres à rechercher
-    param_grid = {
-        'batch_size': [32, 64, 128],
-        'epochs': [20, 30, 40]
-    }
+def test_hyperparameters(model, X_train, y_train, X_val, y_val, model_save_path):
+    learning_rates = [0.01, 0.001]
+    batch_sizes = [32, 64]
+    epochs_list = [10, 20]
 
-    # Callbacks pour la sauvegarde du meilleur modèle et l'arrêt précoce
-    checkpoint = ModelCheckpoint(model_save_path, monitor='val_loss', save_best_only=True, mode='min',
-                                 save_weights_only=True)
-    early_stopping = EarlyStopping(monitor='val_loss', mode='min', patience=5, verbose=1)
+    best_accuracy = 0
+    best_duration = float('inf')
+    best_params = {}
 
-    # Créer le modèle Keras wrapper pour être compatible avec GridSearchCV
-    keras_model = KerasClassifier(build_fn=lambda: build_model(), verbose=0)
+    for lr in learning_rates:
+        optimizer = RMSprop(learning_rate=lr)
+        model.compile(optimizer=optimizer, loss="categorical_crossentropy", metrics=["accuracy"])
+        for batch_size in batch_sizes:
+            for epochs in epochs_list:
+                print(f"Testing with learning_rate={lr}, batch_size={batch_size}, epochs={epochs}")
 
-    # Configurer GridSearchCV avec le modèle Keras, en incluant les callbacks et les données de validation
-    grid = GridSearchCV(estimator=keras_model, param_grid=param_grid, n_jobs=-1, cv=3)
+                # Entraînement du modèle
+                start_time = time.time()
+                history = model.fit(X_train, y_train, batch_size=batch_size, epochs=epochs,
+                                    validation_data=(X_val, y_val), verbose=0)
+                duration = time.time() - start_time
 
-    # Exécution de la recherche par grille avec les données de validation
-    grid_result = grid.fit(X_train, y_train, validation_data=(X_val, y_val), callbacks=[checkpoint, early_stopping])
+                # Évaluation sur les données de validation
+                val_accuracy = max(history.history['val_accuracy'])
 
-    # Afficher les résultats
-    print("Meilleur score : ", grid_result.best_score_)
-    print("Meilleurs paramètres : ", grid_result.best_params_)
+                # Mise à jour du meilleur modèle si nécessaire
+                if val_accuracy > best_accuracy or (val_accuracy == best_accuracy and duration < best_duration):
+                    best_accuracy = val_accuracy
+                    best_duration = duration
+                    best_params = {'learning_rate': lr, 'batch_size': batch_size, 'epochs': epochs}
+                    # Sauvegarde du meilleur modèle
+                    model.save(model_save_path)
 
-    # Entraîner le modèle avec les meilleurs paramètres
-    best_model = grid_result.best_estimator_.model
-    best_model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=grid_result.best_params_['epochs'],
-                   batch_size=grid_result.best_params_['batch_size'], callbacks=[checkpoint, early_stopping], verbose=1)
+                print(f"Finished {lr}, {batch_size}, {epochs} with val_accuracy={val_accuracy}, duration={duration}")
 
-    # Enregistrer le modèle
-    best_model.save(model_save_path)
+    print(f"Best parameters: {best_params}")
 
-    return best_model, duration
+    # Recharger le meilleur modèle sauvegardé
+    best_model = load_model(model_save_path)
+
+    return best_model, best_duration
 
 
 def plot_model_performance(data_metrics):
@@ -344,6 +409,3 @@ def plot_model_performance(data_metrics):
     plt.tight_layout()
     plt.show()
 
-# Utilisation de la méthode
-# Assurez-vous que 'data_metrics' est le DataFrame que vous souhaitez analyser
-# plot_model_performance(data_metrics)
