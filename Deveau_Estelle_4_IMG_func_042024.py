@@ -17,6 +17,7 @@ from keras.applications import VGG16
 from keras.optimizers import RMSprop
 from sklearn.model_selection import GridSearchCV
 import time
+from scikeras.wrappers import KerasClassifier
 
 
 def process_image(image_path):
@@ -103,6 +104,8 @@ def plot_tsne(data, categories_encoded, label_names, perplexity):
     plt.legend(handles=legend_elements, loc='center left', bbox_to_anchor=(1.02, 0.5), title="Catégories")
 
     plt.show()
+
+    return tsne_results
 
 
 def perform_kmeans(X_data, true_labels, label_names, n_clusters=7, random_state=42):
@@ -201,10 +204,9 @@ def image_prep_fct(image_paths, preprocess_function, target_size=(224, 224)):
     for img_path in image_paths:
         img = load_img(img_path, target_size=target_size)
         img = img_to_array(img)
-        img = img.reshape((img.shape[0], img.shape[1], img.shape[2]))
         img = preprocess_function(img)
         prepared_images.append(img)
-    return np.vstack(prepared_images)
+    return np.array(prepared_images)
 
 
 def prepare_data(paths_train, paths_val, paths_test, preprocess_function, target_size):
@@ -300,5 +302,48 @@ def train_model_with_search(build_model, X_train, y_train, X_val, y_val, model_s
     # Enregistrer le modèle
     best_model.save(model_save_path)
 
-    return best_model, grid_result.best_params_, duration
+    return best_model, duration
 
+
+def plot_model_performance(data_metrics):
+    """
+    Affiche un graphique à barres des performances des modèles en fonction des différentes métriques,
+    en triant et en annotant les résultats pour une meilleure visualisation et comparaison.
+
+    Parameters:
+    - data_metrics (pd.DataFrame): DataFrame contenant les colonnes 'Model', 'Metric', et 'Score'.
+
+    """
+    # Trier les données pour la visualisation en fonction du score 'Adjusted Rand Score'
+    sorted_methods = data_metrics[data_metrics['Metric'] == 'Adjusted Rand Score'] \
+        .sort_values(by='Score', ascending=False)['Model'] \
+        .unique()
+
+    # Assurer l'ordre des méthodes dans le DataFrame pour le graphique
+    data_metrics['Model'] = pd.Categorical(data_metrics['Model'], categories=sorted_methods, ordered=True)
+    data_metrics = data_metrics.sort_values('Model')
+
+    # Création du graphique
+    plt.figure(figsize=(12, 8))
+    barplot = sns.barplot(data=data_metrics, x='Metric', y='Score', hue='Model', palette='deep')
+
+    # Ajouter des valeurs de score sur les barres pour une meilleure lisibilité
+    for p in barplot.patches:
+        if p.get_height() > 0:  # Assurez-vous que la hauteur est positive pour afficher le texte
+            barplot.annotate(format(p.get_height(), '.2f'),
+                             (p.get_x() + p.get_width() / 2., p.get_height()),
+                             ha='center', va='center',
+                             xytext=(0, 9),
+                             textcoords='offset points')
+
+    # Configuration finale du graphique
+    plt.title('Comparaison des Métriques de Clustering pour Différentes Méthodes de Traitement d\'Images')
+    plt.xlabel('Métrique')
+    plt.ylabel('Score')
+    plt.legend(title='Modèle', bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    plt.show()
+
+# Utilisation de la méthode
+# Assurez-vous que 'data_metrics' est le DataFrame que vous souhaitez analyser
+# plot_model_performance(data_metrics)
