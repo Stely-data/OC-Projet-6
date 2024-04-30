@@ -281,7 +281,7 @@ def train_model(model, X_train, y_train, X_val, y_val, model_save_path):
     es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=5)
     callbacks_list = [checkpoint, es]
     model.compile(loss="categorical_crossentropy", optimizer=RMSprop(), metrics=["accuracy"])
-    history = model.fit(X_train, y_train, epochs=50, batch_size=64, callbacks=callbacks_list, validation_data=(X_val, y_val), verbose=1)
+    history = model.fit(X_train, y_train, epochs=50, batch_size=32, callbacks=callbacks_list, validation_data=(X_val, y_val), verbose=1)
 
     # Fin du chronométrage
     end_time = time.time()
@@ -327,47 +327,48 @@ def evaluate_model(model, X_train, y_train, X_val, y_val, X_test, y_test, best_w
     return loss, accuracy, ari_score
 
 
-def test_hyperparameters(model, X_train, y_train, X_val, y_val, model_save_path):
+def test_hyperparameters(model, X_train, y_train, X_val, y_val, weights_save_path):
     learning_rates = [0.01, 0.001]
-    batch_sizes = [32, 64]
-    epochs_list = [10, 20]
+    batch_sizes = [16, 32, 64]
+    epochs = 50
 
     best_accuracy = 0
     best_duration = float('inf')
     best_params = {}
 
+    early_stopping = EarlyStopping(monitor='val_loss', patience=5, verbose=1, mode='min', restore_best_weights=True)
+
     for lr in learning_rates:
         optimizer = RMSprop(learning_rate=lr)
         model.compile(optimizer=optimizer, loss="categorical_crossentropy", metrics=["accuracy"])
         for batch_size in batch_sizes:
-            for epochs in epochs_list:
-                print(f"Testing with learning_rate={lr}, batch_size={batch_size}, epochs={epochs}")
+            print(f"Testing with learning_rate={lr}, batch_size={batch_size}, epochs={epochs}")
 
-                # Entraînement du modèle
-                start_time = time.time()
-                history = model.fit(X_train, y_train, batch_size=batch_size, epochs=epochs,
-                                    validation_data=(X_val, y_val), verbose=0)
-                duration = time.time() - start_time
+            # Entraînement du modèle
+            start_time = time.time()
+            history = model.fit(X_train, y_train, batch_size=batch_size, epochs=epochs,
+                                validation_data=(X_val, y_val), verbose=0, callbacks=[early_stopping])
+            duration = time.time() - start_time
 
-                # Évaluation sur les données de validation
-                val_accuracy = max(history.history['val_accuracy'])
+            # Évaluation sur les données de validation
+            val_accuracy = max(history.history['val_accuracy'])
 
-                # Mise à jour du meilleur modèle si nécessaire
-                if val_accuracy > best_accuracy or (val_accuracy == best_accuracy and duration < best_duration):
-                    best_accuracy = val_accuracy
-                    best_duration = duration
-                    best_params = {'learning_rate': lr, 'batch_size': batch_size, 'epochs': epochs}
-                    # Sauvegarde du meilleur modèle
-                    model.save(model_save_path)
+            # Mise à jour du meilleur modèle si nécessaire
+            if val_accuracy > best_accuracy or (val_accuracy == best_accuracy and duration < best_duration):
+                best_accuracy = val_accuracy
+                best_duration = duration
+                best_params = {'learning_rate': lr, 'batch_size': batch_size, 'epochs': epochs}
+                # Sauvegarde des meilleurs poids
+                model.save_weights(weights_save_path)
 
-                print(f"Finished {lr}, {batch_size}, {epochs} with val_accuracy={val_accuracy}, duration={duration}")
+            print(f"Finished {lr}, {batch_size}, {epochs} with val_accuracy={val_accuracy}, duration={duration}")
 
     print(f"Best parameters: {best_params}")
 
-    # Recharger le meilleur modèle sauvegardé
-    best_model = load_model(model_save_path)
+    # Recharger les meilleurs poids sauvegardés
+    model.load_weights(weights_save_path)
 
-    return best_model, best_duration
+    return model, best_duration
 
 
 def plot_model_performance(data_metrics):
