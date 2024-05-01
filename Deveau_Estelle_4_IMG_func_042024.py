@@ -21,6 +21,7 @@ from keras.optimizers import RMSprop
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import GlobalAveragePooling2D, Dropout, Dense
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 # visualisation
 import matplotlib.pyplot as plt
@@ -354,14 +355,18 @@ def test_hyperparameters(model, X_train, y_train, X_val, y_val, weights_save_pat
             val_accuracy = max(history.history['val_accuracy'])
 
             # Mise à jour du meilleur modèle si nécessaire
+            actual_epochs = len(history.history['loss'])
             if val_accuracy > best_accuracy or (val_accuracy == best_accuracy and duration < best_duration):
                 best_accuracy = val_accuracy
                 best_duration = duration
-                best_params = {'learning_rate': lr, 'batch_size': batch_size, 'epochs': epochs}
-                # Sauvegarde des meilleurs poids
+                best_params = {
+                    'learning_rate': lr,
+                    'batch_size': batch_size,
+                    'epochs': actual_epochs - 5
+                }
                 model.save_weights(weights_save_path)
 
-            print(f"Finished {lr}, {batch_size}, {epochs} with val_accuracy={val_accuracy}, duration={duration}")
+            print(f"Finished {lr}, {batch_size} with val_accuracy={val_accuracy}, duration={duration}")
 
     print(f"Best parameters: {best_params}")
 
@@ -410,3 +415,79 @@ def plot_model_performance(data_metrics):
     plt.tight_layout()
     plt.show()
 
+
+def prepare_augmented_data(X_train, y_train, X_val, y_val):
+    train_datagen = ImageDataGenerator(
+        rotation_range=10,
+        width_shift_range=0.2,
+        height_shift_range=0.2,
+        horizontal_flip=False,  # à évaluer
+        zoom_range=0.1,
+        shear_range=0.1,
+        rescale=1./255,
+        preprocessing_function=preprocess_inceptionresnetv2
+    )
+    validation_datagen = ImageDataGenerator(
+        rescale=1./255,
+        preprocessing_function=preprocess_inceptionresnetv2)
+
+    # Configure les générateurs pour utiliser les données chargées
+    train_generator = train_datagen.flow(
+        X_train, y_train,
+        batch_size=32,
+        shuffle=True
+    )
+
+    validation_generator = validation_datagen.flow(
+        X_val, y_val,
+        batch_size=32,
+        shuffle=False
+    )
+
+    return train_generator, validation_generator
+
+
+def train_model_augmented_data(model, train_generator, validation_generator, model_save_path):
+    # Début du chronométrage
+    start_time = time.time()
+    checkpoint = ModelCheckpoint(model_save_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min', save_weights_only=True)
+    es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=5)
+    callbacks_list = [checkpoint, es]
+    model.compile(loss="categorical_crossentropy", optimizer=RMSprop(), metrics=["accuracy"])
+    history = model.fit(train_generator, epochs=50, callbacks=callbacks_list, validation_data=validation_generator, verbose=1)
+
+    # Fin du chronométrage
+    end_time = time.time()
+
+    # Calcul de la durée
+    duration = end_time - start_time
+
+    return model, history, duration
+
+
+def evaluate_model_with_generators(model, train_generator, val_generator, X_test, y_test, best_weights_path='none'):
+    if best_weights_path != 'none':
+        # Chargement des poids de l'epoch optimal
+        model.load_weights(best_weights_path)
+
+    # Évaluation sur l'ensemble d'entraînement et de validation avec les poids de l'epoch optimal
+    loss_train, accuracy_train = model.evaluate(train_generator, verbose=True)
+    print("Training Accuracy (best): {:.4f}".format(accuracy_train))
+
+    loss_val, accuracy_val = model.evaluate(val_generator, verbose=True)
+    print("Validation Accuracy (best): {:.4f}".format(accuracy_val))
+
+    # Évaluation sur l'ensemble de test avec les poids de l'epoch optimal
+    loss_test, accuracy_test = model.evaluate(X_test, y_test, verbose=True)
+    print("Test Accuracy (best): {:.4f}".format(accuracy_test))
+
+    # Prédire les étiquettes pour l'ensemble de test
+    predictions = model.predict(X_test)
+    predicted_labels = np.argmax(predictions, axis=1)
+
+    # Calculer l'ARI
+    true_labels = np.argmax(y_test, axis=1)
+    ari_score = adjusted_rand_score(true_labels, predicted_labels)
+    print("Adjusted Rand Index (ARI): {:.4f}".format(ari_score))
+
+    return loss_test, accuracy_test, ari_score
