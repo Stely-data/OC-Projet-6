@@ -19,6 +19,7 @@ from scikeras.wrappers import KerasClassifier
 from keras.applications import VGG16, InceptionResNetV2, DenseNet201
 from keras.optimizers import RMSprop
 from keras.callbacks import ModelCheckpoint, EarlyStopping
+from tensorflow.keras.applications.inception_resnet_v2 import preprocess_input as preprocess_inceptionresnetv2
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import GlobalAveragePooling2D, Dropout, Dense
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
@@ -362,7 +363,7 @@ def test_hyperparameters(model, X_train, y_train, X_val, y_val, weights_save_pat
                 best_params = {
                     'learning_rate': lr,
                     'batch_size': batch_size,
-                    'epochs': actual_epochs - 5
+                    'epochs': actual_epochs - 4
                 }
                 model.save_weights(weights_save_path)
 
@@ -395,7 +396,7 @@ def plot_model_performance(data_metrics):
     data_metrics = data_metrics.sort_values('Model')
 
     # Création du graphique
-    plt.figure(figsize=(12, 8))
+    plt.figure(figsize=(20, 8))
     barplot = sns.barplot(data=data_metrics, x='Metric', y='Score', hue='Model', palette='deep')
 
     # Ajouter des valeurs de score sur les barres pour une meilleure lisibilité
