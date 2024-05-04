@@ -19,6 +19,7 @@ from scikeras.wrappers import KerasClassifier
 from keras.applications import VGG16, InceptionResNetV2, DenseNet201
 from keras.optimizers import RMSprop
 from keras.callbacks import ModelCheckpoint, EarlyStopping
+from keras.models import Sequential
 from tensorflow.keras.applications.inception_resnet_v2 import preprocess_input as preprocess_inceptionresnetv2
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import GlobalAveragePooling2D, Dropout, Dense
@@ -248,8 +249,6 @@ def create_model_fct(base_model_name='VGG16'):
         base_model = InceptionResNetV2(include_top=False, weights="imagenet", input_shape=(299, 299, 3))
     elif base_model_name == 'DenseNet201':
         base_model = DenseNet201(include_top=False, weights="imagenet", input_shape=(224, 224, 3))
-    elif base_model_name == 'EfficientNetB7':
-        base_model = EfficientNetB7(include_top=False, weights="imagenet", input_shape=(600, 600, 3))
     else:  # Le modèle par défaut est VGG16 si aucun nom valide n'est fourni
         base_model = VGG16(include_top=False, weights="imagenet", input_shape=(224, 224, 3))
 
@@ -425,12 +424,13 @@ def prepare_augmented_data(X_train, y_train, X_val, y_val):
         horizontal_flip=False,  # à évaluer
         zoom_range=0.1,
         shear_range=0.1,
-        rescale=1./255,
+        rescale=1. / 255,
         preprocessing_function=preprocess_inceptionresnetv2
     )
     validation_datagen = ImageDataGenerator(
-        rescale=1./255,
-        preprocessing_function=preprocess_inceptionresnetv2)
+        rescale=1. / 255,
+        preprocessing_function=preprocess_inceptionresnetv2
+    )
 
     # Configure les générateurs pour utiliser les données chargées
     train_generator = train_datagen.flow(
@@ -448,7 +448,7 @@ def prepare_augmented_data(X_train, y_train, X_val, y_val):
     return train_generator, validation_generator
 
 
-def train_model_augmented_data(model, train_generator, validation_generator, model_save_path):
+def train_model_with_generator(model, train_generator, validation_generator, model_save_path):
     # Début du chronométrage
     start_time = time.time()
     checkpoint = ModelCheckpoint(model_save_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min', save_weights_only=True)
@@ -492,3 +492,28 @@ def evaluate_model_with_generators(model, train_generator, val_generator, X_test
     print("Adjusted Rand Index (ARI): {:.4f}".format(ari_score))
 
     return loss_test, accuracy_test, ari_score
+
+
+def create_sequential_model():
+    """
+    Crée et compile un modèle de classification d'images basé sur InceptionResNetV2 avec une approche séquentielle.
+
+    Returns:
+    - model: Le modèle Keras compilé.
+    """
+    # Construction du modèle InceptionResNetV2
+    base_model = InceptionResNetV2(include_top=False, weights="imagenet", input_shape=(299, 299, 3))
+
+    # Construction du modèle séquentiel
+    model = Sequential([
+        base_model,
+        GlobalAveragePooling2D(),
+        Dense(256, activation='relu'),
+        Dropout(0.5),
+        Dense(7, activation='softmax')
+    ])
+
+    # Compilation du modèle
+    model.compile(loss="categorical_crossentropy", optimizer='rmsprop', metrics=["accuracy"])
+
+    return model
