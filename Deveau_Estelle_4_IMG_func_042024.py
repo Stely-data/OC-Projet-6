@@ -16,6 +16,7 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from scikeras.wrappers import KerasClassifier
 
 # deep learning
+from plot_keras_history import show_history, plot_history
 from keras.applications import VGG16, InceptionResNetV2, DenseNet201
 from keras.optimizers import RMSprop
 from keras.callbacks import ModelCheckpoint, EarlyStopping
@@ -290,7 +291,11 @@ def train_model(model, X_train, y_train, X_val, y_val, model_save_path):
     # Calcul de la durée
     duration = end_time - start_time
 
-    return model, history, duration
+    show_history(history)
+    plot_history(history)
+    plt.close()
+
+    return model, duration
 
 
 def evaluate_model(model, X_train, y_train, X_val, y_val, X_test, y_test, best_weights_path='none'):
@@ -336,6 +341,7 @@ def test_hyperparameters(model, X_train, y_train, X_val, y_val, weights_save_pat
     best_accuracy = 0
     best_duration = float('inf')
     best_params = {}
+    best_history = None  # Pour stocker l'historique du meilleur modèle
 
     early_stopping = EarlyStopping(monitor='val_loss', patience=5, verbose=1, mode='min', restore_best_weights=True)
 
@@ -362,8 +368,9 @@ def test_hyperparameters(model, X_train, y_train, X_val, y_val, weights_save_pat
                 best_params = {
                     'learning_rate': lr,
                     'batch_size': batch_size,
-                    'epochs': actual_epochs - 4
+                    'epochs': actual_epochs
                 }
+                best_history = history  # Sauvegarde de l'historique du meilleur modèle
                 model.save_weights(weights_save_path)
 
             print(f"Finished {lr}, {batch_size} with val_accuracy={val_accuracy}, duration={duration}")
@@ -372,6 +379,11 @@ def test_hyperparameters(model, X_train, y_train, X_val, y_val, weights_save_pat
 
     # Recharger les meilleurs poids sauvegardés
     model.load_weights(weights_save_path)
+
+    # Affichage de l'historique du meilleur modèle
+    show_history(best_history)
+    plot_history(best_history)
+    plt.close()
 
     return model, best_duration
 
@@ -416,7 +428,8 @@ def plot_model_performance(data_metrics):
     plt.show()
 
 
-def prepare_augmented_data(X_train, y_train, X_val, y_val):
+def prepare_augmented_data(X_train, y_train):
+    # Création du générateur d'augmentation de données pour l'entraînement
     train_datagen = ImageDataGenerator(
         rotation_range=10,
         width_shift_range=0.2,
@@ -427,71 +440,15 @@ def prepare_augmented_data(X_train, y_train, X_val, y_val):
         rescale=1. / 255,
         preprocessing_function=preprocess_inceptionresnetv2
     )
-    validation_datagen = ImageDataGenerator(
-        rescale=1. / 255,
-        preprocessing_function=preprocess_inceptionresnetv2
-    )
 
-    # Configure les générateurs pour utiliser les données chargées
+    # Préparation des données d'entraînement avec augmentation
     train_generator = train_datagen.flow(
         X_train, y_train,
         batch_size=32,
         shuffle=True
     )
 
-    validation_generator = validation_datagen.flow(
-        X_val, y_val,
-        batch_size=32,
-        shuffle=False
-    )
-
-    return train_generator, validation_generator
-
-
-def train_model_with_generator(model, train_generator, validation_generator, model_save_path):
-    # Début du chronométrage
-    start_time = time.time()
-    checkpoint = ModelCheckpoint(model_save_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min', save_weights_only=True)
-    es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=5)
-    callbacks_list = [checkpoint, es]
-    model.compile(loss="categorical_crossentropy", optimizer=RMSprop(), metrics=["accuracy"])
-    history = model.fit(train_generator, epochs=50, callbacks=callbacks_list, validation_data=validation_generator, verbose=1)
-
-    # Fin du chronométrage
-    end_time = time.time()
-
-    # Calcul de la durée
-    duration = end_time - start_time
-
-    return model, history, duration
-
-
-def evaluate_model_with_generators(model, train_generator, val_generator, X_test, y_test, best_weights_path='none'):
-    if best_weights_path != 'none':
-        # Chargement des poids de l'epoch optimal
-        model.load_weights(best_weights_path)
-
-    # Évaluation sur l'ensemble d'entraînement et de validation avec les poids de l'epoch optimal
-    loss_train, accuracy_train = model.evaluate(train_generator, verbose=True)
-    print("Training Accuracy (best): {:.4f}".format(accuracy_train))
-
-    loss_val, accuracy_val = model.evaluate(val_generator, verbose=True)
-    print("Validation Accuracy (best): {:.4f}".format(accuracy_val))
-
-    # Évaluation sur l'ensemble de test avec les poids de l'epoch optimal
-    loss_test, accuracy_test = model.evaluate(X_test, y_test, verbose=True)
-    print("Test Accuracy (best): {:.4f}".format(accuracy_test))
-
-    # Prédire les étiquettes pour l'ensemble de test
-    predictions = model.predict(X_test)
-    predicted_labels = np.argmax(predictions, axis=1)
-
-    # Calculer l'ARI
-    true_labels = np.argmax(y_test, axis=1)
-    ari_score = adjusted_rand_score(true_labels, predicted_labels)
-    print("Adjusted Rand Index (ARI): {:.4f}".format(ari_score))
-
-    return loss_test, accuracy_test, ari_score
+    return train_generator
 
 
 def create_sequential_model():
