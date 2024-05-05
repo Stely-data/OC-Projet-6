@@ -16,14 +16,17 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from scikeras.wrappers import KerasClassifier
 
 # deep learning
+from tensorflow.keras.applications.inception_resnet_v2 import preprocess_input as preprocess_inceptionresnetv2
 from plot_keras_history import show_history, plot_history
 from keras.applications import VGG16, InceptionResNetV2, DenseNet201
-from keras.optimizers import RMSprop
-from keras.callbacks import ModelCheckpoint, EarlyStopping
+from keras.optimizers import Adam
+from keras.callbacks import ModelCheckpoint
 from keras.models import Sequential
 from tensorflow.keras.applications.inception_resnet_v2 import preprocess_input as preprocess_inceptionresnetv2
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.layers import GlobalAveragePooling2D, Dropout, Dense
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dropout, Dense, Lambda
+from tensorflow.keras.layers import Input, Rescaling, RandomFlip, RandomRotation, RandomZoom
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 # visualisation
@@ -268,7 +271,7 @@ def create_model_fct(base_model_name='VGG16'):
     model = Model(inputs=base_model.input, outputs=predictions)
 
     # Compilation du modèle
-    model.compile(loss="categorical_crossentropy", optimizer='rmsprop', metrics=["accuracy"])
+    model.compile(loss="categorical_crossentropy", optimizer='adam', metrics=["accuracy"])
 
     # Affichage du résumé du modèle
     # model.summary()
@@ -282,7 +285,7 @@ def train_model(model, X_train, y_train, X_val, y_val, model_save_path):
     checkpoint = ModelCheckpoint(model_save_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min', save_weights_only=True)
     es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=5)
     callbacks_list = [checkpoint, es]
-    model.compile(loss="categorical_crossentropy", optimizer=RMSprop(), metrics=["accuracy"])
+    model.compile(loss="categorical_crossentropy", optimizer='adam', metrics=["accuracy"])
     history = model.fit(X_train, y_train, epochs=50, batch_size=32, callbacks=callbacks_list, validation_data=(X_val, y_val), verbose=1)
 
     # Fin du chronométrage
@@ -333,9 +336,9 @@ def evaluate_model(model, X_train, y_train, X_val, y_val, X_test, y_test, best_w
     return loss, accuracy, ari_score
 
 
-def test_hyperparameters(model, X_train, y_train, X_val, y_val, weights_save_path):
-    learning_rates = [0.01, 0.001]
-    batch_sizes = [16, 32, 64]
+def train_hyperparameters(model, X_train, y_train, X_val, y_val, weights_save_path):
+    learning_rates = [0.00075, 0.0005, 0.0001]
+    batch_sizes = [32, 64]
     epochs = 50
 
     best_accuracy = 0
@@ -343,10 +346,13 @@ def test_hyperparameters(model, X_train, y_train, X_val, y_val, weights_save_pat
     best_params = {}
     best_history = None  # Pour stocker l'historique du meilleur modèle
 
-    early_stopping = EarlyStopping(monitor='val_loss', patience=5, verbose=1, mode='min', restore_best_weights=True)
+    callbacks_list = [
+        EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=15, restore_best_weights=True),
+        ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=0.0001, verbose=1)
+    ]
 
     for lr in learning_rates:
-        optimizer = RMSprop(learning_rate=lr)
+        optimizer = Adam(learning_rate=lr)
         model.compile(optimizer=optimizer, loss="categorical_crossentropy", metrics=["accuracy"])
         for batch_size in batch_sizes:
             print(f"Testing with learning_rate={lr}, batch_size={batch_size}, epochs={epochs}")
@@ -354,7 +360,7 @@ def test_hyperparameters(model, X_train, y_train, X_val, y_val, weights_save_pat
             # Entraînement du modèle
             start_time = time.time()
             history = model.fit(X_train, y_train, batch_size=batch_size, epochs=epochs,
-                                validation_data=(X_val, y_val), verbose=0, callbacks=[early_stopping])
+                                validation_data=(X_val, y_val), verbose=0, callbacks=callbacks_list)
             duration = time.time() - start_time
 
             # Évaluation sur les données de validation
@@ -451,18 +457,41 @@ def prepare_augmented_data(X_train, y_train):
     return train_generator
 
 
-def create_sequential_model():
-    """
-    Crée et compile un modèle de classification d'images basé sur InceptionResNetV2 avec une approche séquentielle.
+def image_prep_fct_for_augmentation(image_paths, target_size=(224, 224)):
+    prepared_images = []
+    for img_path in image_paths:
+        img = load_img(img_path, target_size=target_size)
+        img = img_to_array(img)
+        # Note: Ne pas appliquer preprocess_input ici
+        prepared_images.append(img)
+    return np.array(prepared_images)
 
-    Returns:
-    - model: Le modèle Keras compilé.
-    """
-    # Construction du modèle InceptionResNetV2
-    base_model = InceptionResNetV2(include_top=False, weights="imagenet", input_shape=(299, 299, 3))
+def prepare_data_for_augmentation(paths_train, paths_val, paths_test, target_size):
+    X_train = image_prep_fct_for_augmentation(paths_train, target_size=target_size)
+    X_val = image_prep_fct_for_augmentation(paths_val, target_size=target_size)
+    X_test = image_prep_fct_for_augmentation(paths_test, target_size=target_size)
+    return X_train, X_val, X_test
 
-    # Construction du modèle séquentiel
+
+def create_augmented_model():
+    # Base model sans les couches supérieures
+    base_model = InceptionResNetV2(include_top=False, weights='imagenet', input_shape=(299, 299, 3))
+
+    # Geler les couches du modèle de base pour le transfer learning
+    for layer in base_model.layers:
+        layer.trainable = False
+
+    # Ajout de la data augmentation et du prétraitement directement dans le modèle
+    data_augmentation = Sequential([
+        RandomFlip("horizontal"),
+        RandomRotation(0.1),
+        RandomZoom(0.1),
+        Lambda(preprocess_inceptionresnetv2)
+    ], name="data_augmentation")
+
+    # Assemblage du modèle final
     model = Sequential([
+        data_augmentation,
         base_model,
         GlobalAveragePooling2D(),
         Dense(256, activation='relu'),
@@ -471,6 +500,6 @@ def create_sequential_model():
     ])
 
     # Compilation du modèle
-    model.compile(loss="categorical_crossentropy", optimizer='rmsprop', metrics=["accuracy"])
+    model.compile(optimizer='adam', loss="categorical_crossentropy", metrics=["accuracy"])
 
     return model
