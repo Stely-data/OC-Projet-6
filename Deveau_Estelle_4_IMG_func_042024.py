@@ -462,7 +462,6 @@ def image_prep_fct_for_augmentation(image_paths, target_size=(224, 224)):
     for img_path in image_paths:
         img = load_img(img_path, target_size=target_size)
         img = img_to_array(img)
-        # Note: Ne pas appliquer preprocess_input ici
         prepared_images.append(img)
     return np.array(prepared_images)
 
@@ -483,7 +482,7 @@ def create_augmented_model():
 
     # Ajout de la data augmentation et du prétraitement directement dans le modèle
     data_augmentation = Sequential([
-        RandomFlip("horizontal"),
+        RandomFlip("vertical"),
         RandomRotation(0.1),
         RandomZoom(0.1),
         Lambda(preprocess_inceptionresnetv2)
